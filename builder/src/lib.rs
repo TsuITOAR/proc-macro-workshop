@@ -30,13 +30,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let members = struct_fields
         .iter()
         .map(|field| (field.ident.as_ref().unwrap()));
+    let set_members = members.clone().map(
+        |member| quote! {let #member=self.#member.ok_or(format!("Field \"{}\" not set",stringify!(#member)))},
+    );
     let output = quote! {
         impl #struct_name{
             fn builder()->#builder_name{
                 #builder_name::default()
             }
         }
-        #[derive(Default)]
+		#[derive(Default)]
         struct #builder_name{
             #(#builder_fields),*
         }
@@ -45,10 +48,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
             #(#builder_methods)*
         }
         impl #builder_name{
-            fn build(self)->#struct_name{
-                #struct_name{
-                    #(#members:self.#members.unwrap()),*
-                }
+            fn build(self)->Result<#struct_name, Box<dyn std::error::Error>>{
+                #(#set_members?;)*
+                Ok(#struct_name{
+                    #(#members:#members),*
+                })
             }
         }
     };
