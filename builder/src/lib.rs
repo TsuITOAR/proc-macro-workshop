@@ -20,13 +20,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .iter()
         .map(|field| (field.ident.as_ref().unwrap(), &field.ty))
         .map(|(ident, ty)| {
-            quote! {fn #ident(&mut self,value:#ty)->&mut Self{
+            quote! {
+                fn #ident(&mut self,value:#ty)->&mut Self{
                     self.#ident=Some(value);
                     self
                 }
             }
         });
-
+    let members = struct_fields
+        .iter()
+        .map(|field| (field.ident.as_ref().unwrap()));
     let output = quote! {
         impl #struct_name{
             fn builder()->#builder_name{
@@ -40,6 +43,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         impl #builder_name{
             #(#builder_methods)*
+        }
+        impl #builder_name{
+            fn build(self)->#struct_name{
+                #struct_name{
+                    #(#members:self.#members.unwrap()),*
+                }
+            }
         }
     };
     output.into()
