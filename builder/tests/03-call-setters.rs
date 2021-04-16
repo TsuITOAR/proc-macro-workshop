@@ -12,6 +12,7 @@
 
 use derive_builder::Builder;
 
+
 #[derive(Builder)]
 pub struct Command {
     executable: String,
