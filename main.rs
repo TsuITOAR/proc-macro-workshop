@@ -6,6 +6,7 @@
 // To run the code:
 //     $ cargo run
 use derive_builder::Builder;
+#[allow(dead_code)]
 #[derive(Builder)]
 pub struct Command {
     executable: String,

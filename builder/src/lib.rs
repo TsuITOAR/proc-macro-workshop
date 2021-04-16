@@ -31,7 +31,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .iter()
         .map(|field| (field.ident.as_ref().unwrap()));
     let set_members = members.clone().map(
-        |member| quote! {let #member=self.#member.ok_or(format!("Field \"{}\" not set",stringify!(#member)))},
+        |member| quote! {let #member=self.#member.as_ref().ok_or(format!("Field \"{}\" not set",stringify!(#member)))},
     );
     let output = quote! {
         impl #struct_name{
@@ -48,10 +48,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
             #(#builder_methods)*
         }
         impl #builder_name{
-            fn build(self)->Result<#struct_name, Box<dyn std::error::Error>>{
+            fn build(&self)->Result<#struct_name, Box<dyn std::error::Error>>{
                 #(#set_members?;)*
                 Ok(#struct_name{
-                    #(#members:#members),*
+                    #(#members:#members.clone()),*
                 })
             }
         }
