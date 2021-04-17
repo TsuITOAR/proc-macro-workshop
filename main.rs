@@ -6,8 +6,9 @@
 // To run the code:
 //     $ cargo run
 use derive_builder::Builder;
-#[allow(dead_code)]
+
 #[derive(Builder)]
+#[allow(dead_code)]
 pub struct Command {
     executable: String,
     args: Vec<String>,
@@ -15,5 +16,10 @@ pub struct Command {
     current_dir: Option<String>,
 }
 fn main() {
-	
+    Command {
+        executable: "1".to_string(),
+        args: vec!["1".to_string()],
+        env: vec!["1".to_string()],
+        current_dir: None,
+    }.current_dir.is_none();
 }

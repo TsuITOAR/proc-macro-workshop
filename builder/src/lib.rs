@@ -35,7 +35,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .iter()
         .map(|field| (field.ident.as_ref().unwrap(), &field.ty))
         .map(|(ident, ty)| {
-            eprintln!("{:#?}", ty);
             match is_option(ty) {
                 Some(syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
                     args,
@@ -77,6 +76,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 #builder_name::default()
             }
         }
+		#[allow(dead_code)]
         #[derive(Default)]
         struct #builder_name{
             #(#builder_fields),*
