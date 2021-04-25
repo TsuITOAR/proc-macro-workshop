@@ -10,6 +10,7 @@ use derive_builder::Builder;
 #[derive(Builder)]
 #[allow(dead_code)]
 pub struct Command {
+	#[builder(each="s")]
     executable: String,
     args: Vec<String>,
     env: Vec<String>,
