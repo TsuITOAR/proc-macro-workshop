@@ -8,19 +8,24 @@
 use derive_builder::Builder;
 
 #[derive(Builder)]
-#[allow(dead_code)]
 pub struct Command {
-	#[builder(each="s")]
     executable: String,
+    #[builder(each = "arg")]
     args: Vec<String>,
+    #[builder(each = "env")]
     env: Vec<String>,
     current_dir: Option<String>,
 }
+
 fn main() {
-    Command {
-        executable: "1".to_string(),
-        args: vec!["1".to_string()],
-        env: vec!["1".to_string()],
-        current_dir: None,
-    }.current_dir.is_none();
+    let command = Command::builder()
+        .executable("cargo".to_owned())
+        .arg("build".to_owned())
+        .arg("--release".to_owned())
+        .build()
+        .unwrap();
+
+    assert_eq!(command.executable, "cargo");
+    assert_eq!(command.args, vec!["build", "--release"]);
 }
+
