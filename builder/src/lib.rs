@@ -1,18 +1,17 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
-use syn::{spanned::Spanned, Data, DataStruct};
+use quote::quote;
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input: syn::DeriveInput = syn::parse(input).unwrap();
     //eprintln!("INPUT:\n{:#?}", input);
     let struct_name = input.ident;
-    let builder_name = format_ident!("{}Builder", struct_name);
+    let builder_name = quote::format_ident!("{}Builder", struct_name);
     let struct_fields = match input.data {
-        Data::Struct(DataStruct { fields, .. }) => fields,
+        syn::Data::Struct(syn::DataStruct { fields, .. }) => fields,
         _ => unimplemented!("Syntax error"),
     };
-    let is_wrapped = |ty: &syn::Type,wrapper:&str| match ty {
+    let is_wrapped = |ty: &syn::Type, wrapper: &str| match ty {
         syn::Type::Path(
             syn::TypePath {
                 path: syn::Path { segments: s, .. },
@@ -22,8 +21,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         ) if s.len() == 1 && s[0].ident == wrapper => Some(s[0].arguments.clone()),
         _ => None,
     };
-	let is_option = |ty: &syn::Type| is_wrapped(ty,"Option");
-	let is_vec=|ty: &syn::Type| is_wrapped(ty,"Vec");
+    let is_option = |ty: &syn::Type| is_wrapped(ty, "Option");
+    let is_vec = |ty: &syn::Type| is_wrapped(ty, "Vec");
 
     let builder_fields = struct_fields
         .iter()
@@ -32,7 +31,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             if is_option(ty).is_some() {
                 quote! {#ident:#ty}
             } else {
-                quote! {#ident: Option<#ty>}
+                quote! {#ident: std::option::Option<#ty>}
             }
         });
     let builder_methods = struct_fields
@@ -50,15 +49,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }}
             }
             Some(_) => {
-                quote_spanned!(ty.span()=>compile_error!("Option need to wrap a single type"))
+                let error = syn::Error::new_spanned(ty, "Option need to wrap a single type")
+                    .to_compile_error();
+                quote! {#error}
             }
             None => {
-                let mut push_method_name: Option<Result<_, _>> = None;
+                let mut push_method_name: std::option::Option<std::result::Result<_, _>> = None;
                 for attr in attrs {
                     if attr.path.is_ident("builder") {
                         let attr_body = attr.parse_meta().unwrap();
                         //eprintln!("{:#?}", attr_body);
-                        if let syn::Meta::List(syn::MetaList { nested, .. }) = attr_body {
+                        if let syn::Meta::List(syn::MetaList { nested, .. }) = attr_body.clone() {
                             for meta in &nested {
                                 match meta {
                                     syn::NestedMeta::Meta(syn::Meta::NameValue(
@@ -69,21 +70,31 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                         },
                                     )) => {
                                         if path.is_ident("each") {
-											match lit_str.parse::<syn::Ident>(){
-												Ok(ident)=>{
-													push_method_name=Some(Ok(ident));
-												},
-												Err(_)=>{
-													push_method_name=Some(Err(quote_spanned!{lit_str.span()=>compile_error!("Expect str")}));
-												}
-											}
+                                            match lit_str.parse::<syn::Ident>() {
+                                                Ok(ident) => {
+                                                    push_method_name = Some(Ok(ident));
+                                                }
+                                                Err(_) => {
+                                                    let error = syn::Error::new_spanned(
+                                                        lit_str,
+                                                        "expected str",
+                                                    )
+                                                    .to_compile_error();
+                                                    push_method_name = Some(Err(quote! {#error}));
+                                                }
+                                            }
                                         } else {
-											push_method_name=Some(Err(quote_spanned!{meta.span()=>compile_error!("expected `builder(each = \"...\")`")}));
+                                            let error = syn::Error::new_spanned(
+                                                attr_body.clone(),
+                                                "expected `builder(each = \"...\")`",
+                                            )
+                                            .to_compile_error();
+                                            push_method_name = Some(Err(quote! {#error}));
                                         }
                                     }
                                     _ => {
-										unimplemented!("unsupported attribute type");
-									}
+                                        unimplemented!("unsupported attribute type");
+                                    }
                                 }
                             }
                         } else {
@@ -99,45 +110,44 @@ pub fn derive(input: TokenStream) -> TokenStream {
                             self
                         }
                     },
-                    Some(Ok(ref push_method_name)) => {
-						match is_vec(ty) {
-							Some(syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
-								args,
-								..
-							})) if args.len() == 1 => {
-								let unwrap_type = args.first().unwrap();
-								if push_method_name != ident {
-									quote! {
-										fn #push_method_name(&mut self,value:#unwrap_type)->&mut Self{
-											match self.#ident{
-												Some(ref mut v)=>{v.push(value);},
-												None=>{self.#ident=Some(vec![value]);}
-											}
-											self
-										}
-										fn #ident(&mut self,value:#ty)->&mut Self{
-											self.#ident=Some(value);
-											self
-										}
-									}
-								} else {
-									quote! {
-										fn #push_method_name(&mut self,value:#unwrap_type)->&mut Self{
-											match self.#ident{
-												Some(ref mut v)=>{v.push(value);},
-												None=>{self.#ident=Some(vec![value]);}
-											}
-											self
-										}
-									}
-								}
-							}
-							_ => {
-								quote_spanned!(ty.span()=>compile_error!("Option need to wrap a single type"))
-							}
-						}
-                        
-                    }
+                    Some(Ok(ref push_method_name)) => match is_vec(ty) {
+                        Some(syn::PathArguments::AngleBracketed(
+                            syn::AngleBracketedGenericArguments { args, .. },
+                        )) if args.len() == 1 => {
+                            let unwrap_type = args.first().unwrap();
+                            if push_method_name != ident {
+                                quote! {
+                                    fn #push_method_name(&mut self,value:#unwrap_type)->&mut Self{
+                                        match self.#ident{
+                                            Some(ref mut v)=>{v.push(value);},
+                                            None=>{self.#ident=Some(vec![value]);}
+                                        }
+                                        self
+                                    }
+                                    fn #ident(&mut self,value:#ty)->&mut Self{
+                                        self.#ident=Some(value);
+                                        self
+                                    }
+                                }
+                            } else {
+                                quote! {
+                                    fn #push_method_name(&mut self,value:#unwrap_type)->&mut Self{
+                                        match self.#ident{
+                                            Some(ref mut v)=>{v.push(value);},
+                                            None=>{self.#ident=Some(vec![value]);}
+                                        }
+                                        self
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            let error =
+                                syn::Error::new_spanned(ty, "Option need to wrap a single type")
+                                    .to_compile_error();
+                            quote! {#error}
+                        }
+                    },
                     Some(Err(err_message)) => err_message,
                 }
             }
@@ -178,7 +188,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             #(#builder_methods)*
         }
         impl #builder_name{
-            fn build(&self)->Result<#struct_name, Box<dyn std::error::Error>>{
+            fn build(&self)->std::result::Result<#struct_name, std::boxed::Box<dyn std::error::Error>>{
                 #(#set_members;)*
                 Ok(#struct_name{
                     #(#members:#members),*
