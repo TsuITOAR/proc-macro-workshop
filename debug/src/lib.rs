@@ -1,9 +1,10 @@
 use darling::{ast, FromDeriveInput, FromField};
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
+use syn::{parse_macro_input, parse_quote, DeriveInput, GenericParam, Generics};
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    let input = syn::parse(input).expect("parse token stream failed");
+    let input = parse_macro_input!(input as DeriveInput);
     let receiver = MyInputReceiver::from_derive_input(&input).unwrap();
     quote!(#receiver).into()
 }
@@ -29,6 +30,7 @@ impl ToTokens for MyInputReceiver {
             ref generics,
             ref data,
         } = *self;
+        let generics = add_trait_bounds(&generics);
         let (imp, ty, wher) = generics.split_for_impl();
         let fields = data
             .as_ref()
@@ -42,7 +44,7 @@ impl ToTokens for MyInputReceiver {
                 #[allow(unused_must_use)]
                 impl #imp std::fmt::Debug for #ident #ty #wher{
                     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error>{
-                        write!(f,concat!(stringify!(#ident),";"));
+                        write!(f,stringify!(#ident));
                         Ok(())
                     }
                 }
@@ -65,7 +67,7 @@ impl ToTokens for MyInputReceiver {
                                                 "unsupported meta value",
                                             )
                                             .to_compile_error();
-                                            tokens.extend(quote!(#error))
+                                            tokens.extend(quote!(#error));
                                         }
                                     }
                                     break;
@@ -122,9 +124,19 @@ impl ToTokens for MyInputReceiver {
     }
 }
 #[derive(Debug, FromField)]
-#[darling(forward_attrs(debug))]
+#[darling(forward_attrs(debug))] 
 struct MyFieldReceiver {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
+}
+
+fn add_trait_bounds(generics: &Generics) -> Generics {
+    let mut generics = generics.clone();
+    for param in &mut generics.params {
+        if let GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+        }
+    }
+    generics
 }
