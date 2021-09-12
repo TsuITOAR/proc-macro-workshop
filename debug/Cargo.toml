@@ -17,4 +17,5 @@ trybuild = { version = "1.0", features = ["diff"] }
 
 [dependencies]
 syn = { version = "^1", features = ["extra-traits"] }
-quote="^1"
+quote = "^1"
+darling = "*"

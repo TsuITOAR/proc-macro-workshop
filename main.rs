@@ -1,31 +1,44 @@
-// Write code here.
+// Look for a field attribute #[debug = "..."] on each field. If present, find a
+// way to format the field according to the format string given by the caller in
+// the attribute.
 //
-// To see what the code looks like after macro expansion:
-//     $ cargo expand
+// In order for the compiler to recognize this inert attribute as associated
+// with your derive macro, it will need to be declared at the entry point of the
+// derive macro.
 //
-// To run the code:
-//     $ cargo run
-use derive_builder::Builder;
+//     #[proc_macro_derive(CustomDebug, attributes(debug))]
+//
+// These are called inert attributes. The word "inert" indicates that these
+// attributes do not correspond to a macro invocation on their own; they are
+// simply looked at by other macro invocations.
+//
+//
+// Resources:
+//
+//   - Relevant syntax tree types:
+//     https://docs.rs/syn/1.0/syn/struct.Attribute.html
+//     https://docs.rs/syn/1.0/syn/enum.Meta.html
+//
+//   - Macro for applying a format string to some runtime value:
+//     https://doc.rust-lang.org/std/macro.format_args.html
 
-#[derive(Builder)]
-pub struct Command {
-    executable: String,
-    #[builder(each = "arg")]
-    args: Vec<String>,
-    #[builder(each = "env")]
-    env: Vec<String>,
-    current_dir: Option<String>,
+use derive_debug::CustomDebug;
+
+#[derive(CustomDebug)]
+pub struct Field {
+    name: &'static str,
+    #[debug = "0b{:08b}"]
+    bitmask: u8,
 }
 
 fn main() {
-    let command = Command::builder()
-        .executable("cargo".to_owned())
-        .arg("build".to_owned())
-        .arg("--release".to_owned())
-        .build()
-        .unwrap();
+    let f = Field {
+        name: "F",
+        bitmask: 0b00011100,
+    };
 
-    assert_eq!(command.executable, "cargo");
-    assert_eq!(command.args, vec!["build", "--release"]);
+    let debug = format!("{:?}", f);
+    let expected = r#"Field { name: "F", bitmask: 0b00011100 }"#;
+
+    assert_eq!(debug, expected);
 }
-
