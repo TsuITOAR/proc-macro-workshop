@@ -1,23 +1,11 @@
-use darling::{ast, FromDeriveInput, FromField, FromMeta};
+use darling::{ast, FromDeriveInput, FromField};
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
-#[proc_macro_derive(CustomDebug)]
+#[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    let input = syn::parse(input).unwrap();
+    let input = syn::parse(input).expect("parse token stream failed");
     let receiver = MyInputReceiver::from_derive_input(&input).unwrap();
     quote!(#receiver).into()
-}
-
-#[derive(Debug, Clone, FromMeta)]
-struct Format {
-    format: String,
-}
-impl Default for Format {
-    fn default() -> Self {
-        Self {
-            format: "{:?}".to_string(),
-        }
-    }
 }
 
 #[derive(Debug, FromDeriveInput)]
@@ -60,41 +48,70 @@ impl ToTokens for MyInputReceiver {
                 }
             }),
             Some(is_named) => {
-                let format_list = fields
+                let mut format_list = Vec::with_capacity(fields.len());
+                let arg_list = fields
                     .into_iter()
                     .enumerate()
                     .map(|(i, f)| {
-                        let format = f.format.as_ref().map(|x| x.format.clone()).unwrap_or("{:?}".to_string());
+                        let mut format = "{:?}".to_string();
+                        for attr in f.attrs.iter() {
+                            if let Ok(syn::Meta::NameValue(v)) = attr.parse_meta() {
+                                if v.path.is_ident("debug") {
+                                    match v.lit {
+                                        syn::Lit::Str(s) => format = s.value(),
+                                        _ => {
+                                            let error = syn::Error::new_spanned(
+                                                v.lit,
+                                                "unsupported meta value",
+                                            )
+                                            .to_compile_error();
+                                            tokens.extend(quote!(#error))
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        format_list.push(format);
+
                         // This works with named or indexed fields, so we'll fall back to the index so we can
                         // write the output as a key-value pair.
                         let field_ident =
                             f.ident.as_ref().map(|v| quote!(#v)).unwrap_or_else(|| {
                                 let i = syn::Index::from(i);
-                                quote!("{:?}, ",self.#i)
+                                quote!(#i)
                             });
-                        quote!(concat!(stringify!(#field_ident),": ",#format,", "),self.#field_ident)
+
+                        quote!(#field_ident)
                     })
                     .collect::<Vec<_>>();
                 if is_named {
+                    let format_str = arg_list
+                        .iter()
+                        .zip(format_list.iter())
+                        .map(|(arg, format)| format!("{}: {}", arg, format))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     tokens.extend(quote! {
                         #[allow(unused_must_use)]
                         impl #imp std::fmt::Debug for #ident #ty #wher{
                             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error>{
-                                write!(f,concat!(stringify!(#ident)," {{ "));
-                                #(write!(f,#format_list);)*
-                                write!(f,"}};");
+                                write!(f,concat!(stringify!(#ident)," {{ ",#format_str," }}"),#(self.#arg_list),*);
                             Ok(())
                             }
                         }
                     });
                 } else {
+                    let format_str = format_list
+                        .iter()
+                        .map(|format| format!("{}", format))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     tokens.extend(quote! {
                         #[allow(unused_must_use)]
                         impl #imp std::fmt::Debug for #ident #ty #wher{
                             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error>{
-                                write!(f,concat!(stringify!(#ident)," ( "));
-                                #(write!(f,#format_list);)*
-                                write!(f,");");
+                               write!(f,concat!(stringify!(#ident)," ( ",#format_str," )"),#(self.#arg_list),*);
                             Ok(())
                             }
                         }
@@ -105,10 +122,9 @@ impl ToTokens for MyInputReceiver {
     }
 }
 #[derive(Debug, FromField)]
-#[darling(attributes(debug))]
+#[darling(forward_attrs(debug))]
 struct MyFieldReceiver {
     ident: Option<syn::Ident>,
     ty: syn::Type,
-    #[darling(default)]
-    format: Option<Format>,
+    attrs: Vec<syn::Attribute>,
 }
