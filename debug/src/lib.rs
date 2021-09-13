@@ -1,4 +1,8 @@
-use darling::{ast, FromDeriveInput, FromField};
+use darling::{
+    ast,
+    usage::{CollectTypeParams, GenericsExt, Purpose},
+    uses_lifetimes, uses_type_params, FromDeriveInput, FromField,
+};
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{parse_macro_input, parse_quote, DeriveInput, GenericParam, Generics};
@@ -30,7 +34,8 @@ impl ToTokens for MyInputReceiver {
             ref generics,
             ref data,
         } = *self;
-        let generics = add_trait_bounds(&generics);
+        let field_to_bound = get_fields_to_bound(data);
+        let generics = add_trait_bounds(&generics, field_to_bound);
         let (imp, ty, wher) = generics.split_for_impl();
         let fields = data
             .as_ref()
@@ -124,19 +129,47 @@ impl ToTokens for MyInputReceiver {
     }
 }
 #[derive(Debug, FromField)]
-#[darling(forward_attrs(debug))] 
+#[darling(forward_attrs(debug))]
 struct MyFieldReceiver {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
 }
 
-fn add_trait_bounds(generics: &Generics) -> Generics {
+fn add_trait_bounds(generics: &Generics, field_to_bound: Vec<&MyFieldReceiver>) -> Generics {
+    let type_paras = generics.declared_type_params();
+    let bound_set = field_to_bound.collect_type_params(&Purpose::BoundImpl.into(), &type_paras);
     let mut generics = generics.clone();
     for param in &mut generics.params {
         if let GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+            if bound_set.contains(&type_param.ident) {
+                type_param.bounds.push(parse_quote!(std::fmt::Debug));
+            }
         }
     }
     generics
+}
+
+uses_type_params!(MyFieldReceiver, ty);
+uses_lifetimes!(MyFieldReceiver, ty);
+
+fn get_fields_to_bound<'a>(
+    data: &'a ast::Data<(), MyFieldReceiver>,
+) -> Vec<&'a MyFieldReceiver> {
+    let body = data.as_ref().take_struct().expect("Should never be enum");
+    //dbg!(fields);
+    body.fields
+        .into_iter()
+        .filter(|x| {
+            if let syn::Type::Path(ref p) = x.ty {
+                p.path
+                    .segments
+                    .last()
+                    .map(|x| x.ident != "PhantomData")
+                    .unwrap_or(true)
+            } else {
+                true
+            }
+        })
+        .collect()
 }
