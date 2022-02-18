@@ -1,44 +1,46 @@
-// One of the big things callers will want to do with the sequential indices N
-// is use them as part of an identifier, like f0 f1 f2 etc.
+// So far our macro has repeated the entire loop body. This is not sufficient
+// for some use cases because there are restrictions on the syntactic position
+// that macro invocations can appear in. For example the Rust grammar would not
+// allow a caller to write:
 //
-// Implement some logic to paste together any Ident followed by `#` followed by
-// our loop variable into a single concatenated identifier.
+//     enum Interrupt {
+//         seq!(N in 0..16 {
+//             Irq#N,
+//         });
+//     }
 //
-// The invocation below will expand to:
+// because this is just not a legal place to put a macro call.
 //
-//     fn f1() -> u64 { 1 * 2 }
-//     fn f2() -> u64 { 2 * 2 }
-//     fn f3() -> u64 { 3 * 2 }
+// Instead we will implement a way for the caller to designate a specific part
+// of the macro input to be repeated, so that anything outside that part does
+// not get repeated. The repeated part will be written surrounded by #(...)*.
 //
-// Optionally, also support more flexible arrangements like `f#N#_suffix` ->
-// f0_suffix f1_suffix etc, though the test suite only requires `prefix#N` so
-// you will need to add your own tests for this feature.
+// The invocation below should expand to:
 //
+//     #[derive(Copy, Clone, PartialEq, Debug)]
+//     enum Interrupt {
+//         Irq0,
+//         ...
+//         Irq15,
+//     }
 //
-// Resources:
-//
-//     - Example of creating a new Ident from a string:
-//       https://docs.rs/syn/1.0/syn/struct.Ident.html
+// Optionally, allow for there to be multiple separate #(...)* sections,
+// although the test suite does not exercise this case. The #(...)* sections
+// will each need to be repeated according to the same loop bounds.
 
 use seq::seq;
 
-seq!(N in 1..4 {
-    fn f#N () -> u64 {
-        N * 2
+seq!(N in 0..16 {
+    enum Interrupt {
+        #(
+            Irq#N,
+        )*
     }
 });
 
-// This f0 is written separately to detect whether your macro correctly starts
-// with the first iteration at N=1 as specified in the invocation. If the macro
-// incorrectly started at N=0 like in the previous tests cases, the first
-// generated function would conflict with this one and the program would not
-// compile.
-fn f0() -> u64 {
-    100
-}
-
 fn main() {
-    let sum = f0() + f1() + f2() + f3();
+    let interrupt = Interrupt::Irq8;
 
-    assert_eq!(sum, 100 + 2 + 4 + 6);
+    assert_eq!(interrupt as u8, 8);
+    assert_eq!(interrupt, Interrupt::Irq8);
 }

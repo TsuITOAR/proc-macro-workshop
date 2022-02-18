@@ -1,11 +1,11 @@
 #![feature(proc_macro_diagnostic)]
 use proc_macro::TokenStream;
-use proc_macro2::{Group, Literal, TokenStream as TokenStream2, TokenTree};
+use proc_macro2::{Delimiter, Group, Literal, TokenStream as TokenStream2, TokenTree};
 use quote::{format_ident, quote, ToTokens};
 use syn::{
-    braced,
+    braced, parenthesized,
     parse::{Parse, ParseStream},
-    parse_macro_input, Ident, LitInt, Result, Token,
+    parse2, parse_macro_input, Ident, LitInt, Result, Token,
 };
 
 #[derive(Debug, Clone)]
@@ -13,7 +13,7 @@ struct Seq {
     ident: Ident,
     lower_bound: i32,
     higher_bound: i32,
-    body: TokenStream2,
+    body: RepeatBody,
 }
 
 impl Parse for Seq {
@@ -34,7 +34,106 @@ impl Parse for Seq {
     }
 }
 
-fn substitute_ident(input: TokenStream2, ident: Ident, target: &TokenTree) -> TokenStream2 {
+impl ToTokens for Seq {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        let iter = (self.lower_bound..self.higher_bound)
+            .map(|x| TokenTree::Literal(Literal::i32_unsuffixed(x)));
+        match self.body {
+            RepeatBody::RepAll(ref a) => {
+                tokens.extend(iter.map(|x| substitute_ident(a.clone(), &self.ident, &x)));
+            }
+            RepeatBody::RepPart(ref r) => r.clone().to_tokens(&self.ident, iter, tokens),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum RepeatBody {
+    RepAll(TokenStream2),
+    RepPart(RepGroup),
+}
+#[derive(Debug, Clone)]
+enum RepSec {
+    Group { delim: Delimiter, content: RepGroup },
+    RepNode(TokenStream2),
+    NonRep(TokenStream2),
+}
+
+#[derive(Debug, Clone)]
+struct RepGroup {
+    s: Vec<RepSec>,
+}
+
+impl RepGroup {
+    fn to_tokens<Iter: Iterator<Item = TokenTree> + Clone>(
+        self,
+        src: &Ident,
+        dst: Iter,
+        s: &mut TokenStream2,
+    ) {
+        for i in self.s {
+            match i {
+                RepSec::Group { delim, content } => {
+                    let mut ts = TokenStream2::new();
+                    content.to_tokens(&src, dst.clone(), &mut ts);
+                    Group::new(delim, ts).to_tokens(s)
+                }
+                RepSec::NonRep(t) => t.to_tokens(s),
+                RepSec::RepNode(r) => s.extend(
+                    dst.clone()
+                        .into_iter()
+                        .map(|i| substitute_ident(r.clone(), src, &i)),
+                ),
+            }
+        }
+    }
+}
+
+impl Parse for RepGroup {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut s = Vec::new();
+        let rep_sec;
+        while !input.is_empty() {
+            if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
+                input.parse::<Token![#]>()?;
+                parenthesized!(rep_sec in input);
+                s.push(RepSec::RepNode(rep_sec.parse()?));
+                input.parse::<Token![*]>()?;
+                s.push(RepSec::NonRep(input.parse()?));
+                break;
+            } else if let Ok(g) = input.parse::<Group>() {
+                s.push(RepSec::Group {
+                    delim: g.delimiter(),
+                    content: parse2(g.stream())?,
+                })
+            } else {
+                s.push(RepSec::NonRep(
+                    input.parse::<TokenTree>()?.to_token_stream(),
+                ));
+            }
+        }
+        Ok(RepGroup { s })
+    }
+}
+
+impl Parse for RepeatBody {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut pre = TokenStream2::new();
+        let fork = input.fork();
+        loop {
+            if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
+                break;
+            } else if input.is_empty() {
+                return Ok(RepeatBody::RepAll(pre));
+            } else {
+                input.parse::<TokenTree>()?.to_tokens(&mut pre);
+            }
+        }
+        Ok(RepeatBody::RepPart(fork.parse()?))
+    }
+}
+
+fn substitute_ident(input: TokenStream2, ident: &Ident, target: &TokenTree) -> TokenStream2 {
     let mut out = TokenStream2::new();
     let mut concat_ident = None;
     let mut last_ident = None;
@@ -44,13 +143,13 @@ fn substitute_ident(input: TokenStream2, ident: Ident, target: &TokenTree) -> To
                 last_ident.take().to_tokens(&mut out);
                 let mut ng = TokenTree::Group(Group::new(
                     g.delimiter(),
-                    substitute_ident(g.stream(), ident.clone(), target),
+                    substitute_ident(g.stream(), ident, target),
                 ));
                 ng.set_span(g.span());
                 ng.to_tokens(&mut out)
             }
             TokenTree::Ident(i) => {
-                if i == ident {
+                if i == *ident {
                     match concat_ident.take() {
                         Some(x) => format_ident!("{}{}", x, target.to_string()).to_tokens(&mut out),
                         None => target.to_tokens(&mut out),
@@ -85,19 +184,10 @@ fn substitute_ident(input: TokenStream2, ident: Ident, target: &TokenTree) -> To
     }
     out
 }
-enum T{
-    One(u8),
-    Two
-}
+
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as Seq);
-    let s = (input.lower_bound..input.higher_bound).map(|i| {
-        substitute_ident(
-            input.body.clone(),
-            input.ident.clone(),
-            &TokenTree::Literal(Literal::i32_unsuffixed(i)),
-        )
-    });
-    quote! {#(#s)*}.into()
+    dbg!(&input);
+    quote! {#input}.into()
 }
