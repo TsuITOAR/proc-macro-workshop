@@ -85,6 +85,8 @@ impl RepGroup {
                         .map(|i| substitute_ident(r.clone(), src, &i)),
                 ),
             }
+
+            dbg!(&s);
         }
     }
 }
@@ -94,6 +96,7 @@ impl Parse for RepGroup {
         let mut s = Vec::new();
         let rep_sec;
         while !input.is_empty() {
+            dbg!(input);
             if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
                 input.parse::<Token![#]>()?;
                 parenthesized!(rep_sec in input);
@@ -112,7 +115,7 @@ impl Parse for RepGroup {
                 ));
             }
         }
-        Ok(RepGroup { s })
+        Ok(dbg!(RepGroup { s }))
     }
 }
 
@@ -121,12 +124,31 @@ impl Parse for RepeatBody {
         let mut pre = TokenStream2::new();
         let fork = input.fork();
         loop {
+            dbg!(input);
             if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
                 break;
             } else if input.is_empty() {
                 return Ok(RepeatBody::RepAll(pre));
             } else {
-                input.parse::<TokenTree>()?.to_tokens(&mut pre);
+                if let Ok(g) = input.parse::<Group>() {
+                    match parse2::<RepeatBody>(g.stream())? {
+                        RepeatBody::RepAll(_) => g.to_tokens(&mut pre),
+                        RepeatBody::RepPart(p) => {
+                            return Ok(RepeatBody::RepPart(RepGroup {
+                                s: vec![
+                                    RepSec::NonRep(pre),
+                                    RepSec::Group {
+                                        delim: g.delimiter(),
+                                        content: p,
+                                    },
+                                    RepSec::NonRep(dbg!(input.parse())?),
+                                ],
+                            }))
+                        }
+                    }
+                } else {
+                    input.parse::<TokenTree>()?.to_tokens(&mut pre);
+                }
             }
         }
         Ok(RepeatBody::RepPart(fork.parse()?))
