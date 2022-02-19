@@ -8,10 +8,11 @@ use syn::{
     parse2, parse_macro_input, Ident, LitInt, Result, Token,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Seq {
     ident: Ident,
     lower_bound: i32,
+    eq_token: Option<Token![=]>,
     higher_bound: i32,
     body: Body,
 }
@@ -22,12 +23,14 @@ impl Parse for Seq {
         input.parse::<Token![in]>()?;
         let lower_bound = input.parse::<LitInt>()?.base10_parse()?;
         input.parse::<Token![..]>()?;
+        let eq_token = input.parse()?;
         let higher_bound = input.parse::<LitInt>()?.base10_parse()?;
         let body;
         braced!(body in input);
         Ok(Self {
             ident,
             lower_bound,
+            eq_token,
             higher_bound,
             body: body.parse()?,
         })
@@ -36,8 +39,11 @@ impl Parse for Seq {
 
 impl ToTokens for Seq {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let iter = (self.lower_bound..self.higher_bound)
-            .map(|x| TokenTree::Literal(Literal::i32_unsuffixed(x)));
+        let iter = match self.eq_token {
+            None => (self.lower_bound..self.higher_bound),
+            Some(_) => (self.lower_bound..self.higher_bound + 1),
+        }
+        .map(|x| TokenTree::Literal(Literal::i32_unsuffixed(x)));
         match self.body {
             Body::RepAll(ref a) => {
                 tokens.extend(iter.map(|x| substitute_ident(a.clone(), &self.ident, &x)));
@@ -94,7 +100,6 @@ impl RepStream {
 
 impl Parse for RepStream {
     fn parse(input: ParseStream) -> Result<Self> {
-        //let _s = DebugGuard::new(format!("parsing RepeatSec: {}", input.to_string()));
         let mut s = Vec::new();
         let rep_sec;
         while !input.is_empty() {
@@ -122,7 +127,6 @@ impl Parse for RepStream {
 
 impl Parse for Body {
     fn parse(input: ParseStream) -> Result<Self> {
-        //let _s = DebugGuard::new(format!("parsing Body: {}", input.to_string()));
         let mut pre = TokenStream2::new();
         let fork = input.fork();
         loop {
@@ -205,21 +209,3 @@ pub fn seq(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as Seq);
     quote! {#input}.into()
 }
-/* 
-struct DebugGuard {
-    info: String,
-}
-
-impl DebugGuard {
-    fn new(info: String) -> Self {
-        eprintln!("starting {}", info);
-        Self { info }
-    }
-}
-
-impl Drop for DebugGuard {
-    fn drop(&mut self) {
-        eprintln!("ending {}", &self.info);
-    }
-}
- */
