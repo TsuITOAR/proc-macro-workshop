@@ -13,7 +13,7 @@ struct Seq {
     ident: Ident,
     lower_bound: i32,
     higher_bound: i32,
-    body: RepeatBody,
+    body: Body,
 }
 
 impl Parse for Seq {
@@ -39,32 +39,35 @@ impl ToTokens for Seq {
         let iter = (self.lower_bound..self.higher_bound)
             .map(|x| TokenTree::Literal(Literal::i32_unsuffixed(x)));
         match self.body {
-            RepeatBody::RepAll(ref a) => {
+            Body::RepAll(ref a) => {
                 tokens.extend(iter.map(|x| substitute_ident(a.clone(), &self.ident, &x)));
             }
-            RepeatBody::RepPart(ref r) => r.clone().to_tokens(&self.ident, iter, tokens),
+            Body::RepPart(ref r) => r.clone().to_tokens(&self.ident, iter, tokens),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-enum RepeatBody {
+enum Body {
     RepAll(TokenStream2),
-    RepPart(RepGroup),
+    RepPart(RepStream),
 }
 #[derive(Debug, Clone)]
-enum RepSec {
-    Group { delim: Delimiter, content: RepGroup },
+enum RepToken {
+    Group {
+        delim: Delimiter,
+        content: RepStream,
+    },
     RepNode(TokenStream2),
     NonRep(TokenStream2),
 }
 
 #[derive(Debug, Clone)]
-struct RepGroup {
-    s: Vec<RepSec>,
+struct RepStream {
+    s: Vec<RepToken>,
 }
 
-impl RepGroup {
+impl RepStream {
     fn to_tokens<Iter: Iterator<Item = TokenTree> + Clone>(
         self,
         src: &Ident,
@@ -73,85 +76,75 @@ impl RepGroup {
     ) {
         for i in self.s {
             match i {
-                RepSec::Group { delim, content } => {
+                RepToken::Group { delim, content } => {
                     let mut ts = TokenStream2::new();
                     content.to_tokens(&src, dst.clone(), &mut ts);
                     Group::new(delim, ts).to_tokens(s)
                 }
-                RepSec::NonRep(t) => t.to_tokens(s),
-                RepSec::RepNode(r) => s.extend(
+                RepToken::NonRep(t) => t.to_tokens(s),
+                RepToken::RepNode(r) => s.extend(
                     dst.clone()
                         .into_iter()
                         .map(|i| substitute_ident(r.clone(), src, &i)),
                 ),
             }
-
-            dbg!(&s);
         }
     }
 }
 
-impl Parse for RepGroup {
+impl Parse for RepStream {
     fn parse(input: ParseStream) -> Result<Self> {
+        //let _s = DebugGuard::new(format!("parsing RepeatSec: {}", input.to_string()));
         let mut s = Vec::new();
         let rep_sec;
         while !input.is_empty() {
-            dbg!(input);
             if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
                 input.parse::<Token![#]>()?;
                 parenthesized!(rep_sec in input);
-                s.push(RepSec::RepNode(rep_sec.parse()?));
+                s.push(RepToken::RepNode(rep_sec.parse()?));
                 input.parse::<Token![*]>()?;
-                s.push(RepSec::NonRep(input.parse()?));
+                s.push(RepToken::NonRep(input.parse()?));
                 break;
             } else if let Ok(g) = input.parse::<Group>() {
-                s.push(RepSec::Group {
+                s.push(RepToken::Group {
                     delim: g.delimiter(),
                     content: parse2(g.stream())?,
-                })
+                });
             } else {
-                s.push(RepSec::NonRep(
+                s.push(RepToken::NonRep(
                     input.parse::<TokenTree>()?.to_token_stream(),
                 ));
             }
         }
-        Ok(dbg!(RepGroup { s }))
+        Ok(RepStream { s })
     }
 }
 
-impl Parse for RepeatBody {
+impl Parse for Body {
     fn parse(input: ParseStream) -> Result<Self> {
+        //let _s = DebugGuard::new(format!("parsing Body: {}", input.to_string()));
         let mut pre = TokenStream2::new();
         let fork = input.fork();
         loop {
-            dbg!(input);
-            if input.peek(Token![#]) && input.peek2(syn::token::Paren) {
+            if fork.peek(Token![#]) && fork.peek2(syn::token::Paren) {
                 break;
-            } else if input.is_empty() {
-                return Ok(RepeatBody::RepAll(pre));
+            } else if fork.is_empty() {
+                return Ok(Body::RepAll(input.parse()?));
             } else {
-                if let Ok(g) = input.parse::<Group>() {
-                    match parse2::<RepeatBody>(g.stream())? {
-                        RepeatBody::RepAll(_) => g.to_tokens(&mut pre),
-                        RepeatBody::RepPart(p) => {
-                            return Ok(RepeatBody::RepPart(RepGroup {
-                                s: vec![
-                                    RepSec::NonRep(pre),
-                                    RepSec::Group {
-                                        delim: g.delimiter(),
-                                        content: p,
-                                    },
-                                    RepSec::NonRep(dbg!(input.parse())?),
-                                ],
-                            }))
+                if let Ok(g) = fork.parse::<Group>() {
+                    match parse2::<Self>(g.stream())? {
+                        Body::RepAll(_) => g.to_tokens(&mut pre),
+                        Body::RepPart(_) => {
+                            return Ok(Body::RepPart(input.parse()?));
                         }
                     }
                 } else {
-                    input.parse::<TokenTree>()?.to_tokens(&mut pre);
+                    fork.parse::<TokenTree>()?.to_tokens(&mut pre);
                 }
             }
         }
-        Ok(RepeatBody::RepPart(fork.parse()?))
+
+        Ok(Body::RepPart(input.parse()?))
     }
 }
 
@@ -210,6 +203,23 @@ fn substitute_ident(input: TokenStream2, ident: &Ident, target: &TokenTree) -> T
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as Seq);
-    dbg!(&input);
     quote! {#input}.into()
 }
+/* 
+struct DebugGuard {
+    info: String,
+}
+
+impl DebugGuard {
+    fn new(info: String) -> Self {
+        eprintln!("starting {}", info);
+        Self { info }
+    }
+}
+
+impl Drop for DebugGuard {
+    fn drop(&mut self) {
+        eprintln!("ending {}", &self.info);
+    }
+}
+ */
